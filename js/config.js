@@ -26,5 +26,12 @@ const menuConfig = [
         desc: "无损压缩，极速瘦身，实时预览",
         link: "image-compress.html",
         color: "from-orange-400 to-red-600"
+    },
+    {
+        name: "GIF 分分合",
+        icon: "🎞️",
+        desc: "GIF 拆分与合成，每一帧都由你掌控",
+        link: "gif-tool.html",
+        color: "from-pink-400 to-rose-600"
     }
 ];

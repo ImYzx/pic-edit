@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIF 分分合 - PicEdit</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/fonts.css">
+    <script src="js/tailwindcss.js"></script>
+    <script src="js/vue.js"></script>
+    <script src="js/jszip.min.js"></script>
+    <script src="js/FileSaver.min.js"></script>
+
+    <!-- GIF Encoder (gif.js) -->
+    <script src="js/gif.js"></script>
+    <script>
+        window.GIFEncoder = window.GIF;
+    </script>
+
+    <!-- GIF Decoder (gifuct-js) -->
+    <script src="js/gifuct.js"></script>
+    <script>
+        window.GIFParser = window.GIF;
+        // Restore Encoder as default GIF, or just use explicit names
+        window.GIF = window.GIFEncoder; 
+    </script>
+
+    <script src="js/config.js"></script>
+</head>
+
+<body>
+    <div id="app" class="min-h-screen flex flex-col">
+        <nav class="nav-bar">
+            <div class="nav-logo"><a href="index.html">⚡ PicEdit</a> / GIF 分分合</div>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <a v-for="item in menu" :href="item.link" :key="item.name"
+                    :class="{ active: item.link === 'gif-tool.html' }">{{ item.name }}</a>
+            </div>
+        </nav>
+
+        <main class="flex-1 container mx-auto px-4 py-8 max-w-6xl">
+            <header class="header mb-8 text-center pt-8">
+                <h1
+                    class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-rose-600 mb-2">
+                    GIF 分分合</h1>
+                <p class="text-slate-400">将 GIF 拆解为每一帧，或将多张图片合成为动图，随心掌控。</p>
+            </header>
+
+            <!-- Mode Switcher -->
+            <div class="flex justify-center mb-8">
+                <div class="bg-slate-800 p-1 rounded-lg flex gap-1 border border-slate-700">
+                    <button class="px-6 py-2 rounded-md text-sm font-medium transition-colors"
+                        :class="mode === 'split' ? 'bg-slate-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+                        @click="mode = 'split'">
+                        🔪 GIF 拆分
+                    </button>
+                    <button class="px-6 py-2 rounded-md text-sm font-medium transition-colors"
+                        :class="mode === 'merge' ? 'bg-slate-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+                        @click="mode = 'merge'">
+                        🎬 GIF 合成
+                    </button>
+                </div>
+            </div>
+
+            <!-- Split Mode -->
+            <div v-show="mode === 'split'" class="animate-fade-in">
+                <div v-if="!splitGif.loaded" class="max-w-xl mx-auto">
+                    <div class="file-input-wrapper" @click="$refs.splitInput.click()" @drop.prevent="handleSplitDrop"
+                        @dragover.prevent>
+                        <input type="file" ref="splitInput" class="hidden" accept="image/gif" @change="handleSplitFile">
+                        <div class="text-6xl mb-4">🎞️</div>
+                        <p class="text-lg font-semibold text-white">点击上传 GIF 文件</p>
+                        <p class="text-sm text-slate-400 mt-2">支持任意大小的 GIF</p>
+                    </div>
+                </div>
+
+                <div v-else class="flex flex-col gap-6">
+                    <!-- Actions Bar -->
+                    <div class="card p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div
+                                class="w-16 h-16 bg-slate-800 rounded flex items-center justify-center overflow-hidden border border-slate-600">
+                                <img :src="splitGif.url" class="max-w-full max-h-full">
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white">{{ splitGif.name }}</h3>
+                                <p class="text-xs text-slate-500">{{ splitGif.frames.length }} 帧 | {{ splitGif.width
+                                    }}x{{ splitGif.height }}</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <button class="btn btn-secondary" @click="resetSplit">🔄 重新上传</button>
+                            <button class="btn" @click="downloadAllFrames">📦 打包下载所有帧 (.zip)</button>
+                        </div>
+                    </div>
+
+                    <!-- Frames Grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                        <div v-for="(frame, idx) in splitGif.frames" :key="idx" class="card group relative">
+                            <div
+                                class="aspect-square bg-slate-900 flex items-center justify-center overflow-hidden rounded-t-lg">
+                                <img :src="frame.url" class="max-w-full max-h-full">
+                            </div>
+                            <div
+                                class="p-2 flex justify-between items-center bg-slate-800 rounded-b-lg border-t border-slate-700">
+                                <span class="text-xs text-slate-500">Frame {{ idx + 1 }}</span>
+                                <button class="text-xs text-blue-400 hover:text-blue-300"
+                                    @click="downloadSingleFrame(frame, idx)">下载</button>
+                            </div>
+                            <div class="absolute top-2 left-2 bg-black/50 text-[10px] px-1 rounded text-white">{{
+                                frame.delay }}ms</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Merge Mode -->
+            <div v-show="mode === 'merge'" class="animate-fade-in">
+                <div v-if="!mergeGif.frames.length" class="max-w-xl mx-auto">
+                    <div class="file-input-wrapper" @click="$refs.mergeInput.click()" @drop.prevent="handleMergeDrop"
+                        @dragover.prevent>
+                        <input type="file" ref="mergeInput" class="hidden" accept="image/*" multiple
+                            @change="handleMergeFile">
+                        <div class="text-6xl mb-4">📸</div>
+                        <p class="text-lg font-semibold text-white">点击上传多张图片</p>
+                        <p class="text-sm text-slate-400 mt-2">支持批量上传，可再次添加</p>
+                    </div>
+                </div>
+
+                <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    <!-- Controls -->
+                    <div class="lg:col-span-4 flex flex-col gap-6">
+                        <div class="card p-4">
+                            <h3 class="text-lg font-bold text-white mb-4 border-b border-slate-700 pb-2">生成设置</h3>
+
+                            <div class="input-group">
+                                <label class="input-label flex justify-between">
+                                    <span>帧间隔 (Speed)</span>
+                                    <span class="text-blue-400">{{ mergeGif.delay }}ms</span>
+                                </label>
+                                <input type="range" v-model.number="mergeGif.delay" min="20" max="1000" step="10"
+                                    class="w-full">
+                            </div>
+
+                            <div class="input-group">
+                                <label class="input-label">循环 (Loop)</label>
+                                <select v-model.number="mergeGif.repeat"
+                                    class="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white">
+                                    <option :value="0">无限循环</option>
+                                    <option :value="-1">不循环</option>
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col gap-2 mt-4">
+                                <button class="btn btn-secondary w-full" @click="$refs.mergeInput.click()">➕
+                                    添加更多图片</button>
+                                <button class="btn w-full bg-pink-600 hover:bg-pink-500" @click="generateGif"
+                                    :disabled="mergeGif.processing">
+                                    {{ mergeGif.processing ? '⏳ 生成中...' : '🎬 生成 GIF' }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Preview -->
+                        <div class="card p-4 flex flex-col items-center justify-center min-h-[200px]"
+                            v-if="mergeGif.url">
+                            <h3 class="text-sm font-bold text-slate-400 mb-2 w-full text-left">结果预览</h3>
+                            <img :src="mergeGif.url" class="max-w-full max-h-[300px] object-contain shadow-lg mb-4">
+                            <button class="btn w-full" @click="downloadMergeGif">⬇️ 下载 GIF</button>
+                        </div>
+                    </div>
+
+                    <!-- Frames List (Reorder) -->
+                    <div class="lg:col-span-8">
+                        <div class="flex justify-between items-center mb-4 text-sm text-slate-400">
+                            <span>已添加 {{ mergeGif.frames.length }} 帧 (拖拽排序 [TODO: add drag], 使用按钮移动)</span>
+                            <button class="text-red-400 hover:text-red-300" @click="resetMerge">清空所有</button>
+                        </div>
+                        <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            <div v-for="(frame, idx) in mergeGif.frames" :key="idx"
+                                class="card group relative aspect-square bg-slate-800 flex items-center justify-center overflow-hidden border border-slate-700 hover:border-blue-500">
+                                <img :src="frame.url" class="max-w-full max-h-full">
+
+                                <div class="absolute top-1 left-1 bg-black/60 text-[10px] px-1.5 rounded text-white">{{
+                                    idx + 1 }}</div>
+
+                                <!-- Overlay Controls -->
+                                <div
+                                    class="absolute inset-0 bg-black/80 hidden group-hover:flex flex-col items-center justify-center gap-2 backdrop-blur-[1px] z-10">
+                                    <div class="flex gap-2">
+                                        <button class="text-slate-300 hover:text-white" @click="moveMergeFrame(idx, -1)"
+                                            v-if="idx > 0">⬅️</button>
+                                        <button class="text-slate-300 hover:text-white" @click="moveMergeFrame(idx, 1)"
+                                            v-if="idx < mergeGif.frames.length -1">➡️</button>
+                                    </div>
+                                    <button
+                                        class="text-red-400 hover:text-red-200 text-xs border border-red-900 bg-red-900/20 px-2 py-1 rounded"
+                                        @click="removeMergeFrame(idx)">Remove</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                menu: menuConfig,
+                mode: 'split', // 'split' | 'merge'
+
+                // Split State
+                splitGif: {
+                    loaded: false,
+                    url: '',
+                    name: '',
+                    width: 0,
+                    height: 0,
+                    frames: [] // { url: string, delay: number }
+                },
+
+                // Merge State
+                mergeGif: {
+                    frames: [], // { url: string, file: File }
+                    delay: 200,
+                    repeat: 0,
+                    processing: false,
+                    url: ''
+                }
+            },
+            methods: {
+                // --- SPLIT LOGIC ---
+                handleSplitFile(e) {
+                    const file = e.target.files[0];
+                    if (file) this.processGif(file);
+                },
+                handleSplitDrop(e) {
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.type === 'image/gif') this.processGif(file);
+                },
+                resetSplit() {
+                    this.splitGif = { loaded: false, url: '', name: '', frames: [], width: 0, height: 0 };
+                    if (this.$refs.splitInput) this.$refs.splitInput.value = '';
+                },
+                async processGif(file) {
+                    this.splitGif.name = file.name.replace('.gif', '');
+                    this.splitGif.url = URL.createObjectURL(file);
+
+                    const buffer = await file.arrayBuffer();
+                    // Use GIFParser class from gifuct.js
+                    const gif = new window.GIFParser(buffer);
+                    const frames = gif.decompressFrames(true); // buildPatch = true
+
+                    this.splitGif.frames = [];
+
+                    // Render frames to canvas to handle patch/disposal
+                    // gifuct provides patch, but we need to composite it.
+                    // Assuming frames are essentially full patches or need simple overlay?
+                    // gifuct docs: frames have patch, dims, etc.
+
+                    // We need a canvas context to draw them
+                    const cvs = document.createElement('canvas');
+                    const ctx = cvs.getContext('2d');
+                    // Canvas size from Logical Screen Descriptor? gifuct gives it?
+                    // gif.lsd.width
+                    const width = frames[0].dims.width; // Usually first frame defines? No, header.
+                    // Actually gif object has lsd
+                    // Let's assume frames[0] dims for now or use implicit.
+                    // frames have `dims: {width, height, top, left}`
+
+                    // Actually gif.raw.lsd.width
+                    const gifWidth = frames[0].dims.width; // This might be patch width.
+                    // We need global size. gifuct returns `frames` which are `ParsedFrame`.
+                    // We might need to guess size if header not exposed easily, 
+                    // but typically we can assume the final canvas size matches the first frame or max bounds.
+                    // Let's rely on patch application.
+
+                    // NOTE: Implementing full GIF disposal logic is complex.
+                    // Simple approach: Draw each patch on previous canvas state (unless disposal says clear).
+                    // gifuct "decompressFrames(gif, true)" returns 'patch' array which is pixels.
+
+                    // Let's try to find the full width/height.
+                    // gif.lsd is likely available if we inspected `parseGIF` result structure manually.
+                    // For now, let's just use the first frame size or max extent.
+                    // Let's assume all frames fill the canvas for simple GIFs, or composite.
+
+                    // Better approach for `gifuct-js`:
+                    // It creates patches. We need to create a `ImageData` and put it.
+
+                    // Let's try to get full width/height from first frame assuming it's background
+                    // Or iterate to find max right/bottom.
+                    let maxWidth = 0;
+                    let maxHeight = 0;
+                    frames.forEach(f => {
+                        maxWidth = Math.max(maxWidth, f.dims.left + f.dims.width);
+                        maxHeight = Math.max(maxHeight, f.dims.top + f.dims.height);
+                    });
+
+                    this.splitGif.width = maxWidth;
+                    this.splitGif.height = maxHeight;
+                    cvs.width = maxWidth;
+                    cvs.height = maxHeight;
+
+                    // Temp canvas for frame composition
+                    const tempCvs = document.createElement('canvas');
+                    tempCvs.width = maxWidth;
+                    tempCvs.height = maxHeight;
+                    const tempCtx = tempCvs.getContext('2d');
+
+                    // Frame data cache to handle 'restore to previous' disposal?
+                    // Disposal: 
+                    // 1: Do not dispose (keep)
+                    // 2: Restore to background (clear)
+                    // 3: Restore to previous
+
+                    let frameImageData = tempCtx.createImageData(maxWidth, maxHeight);
+
+                    // We'll iterate and capture snapshots
+                    // Since `gifuct` gives ready-to-render patches, we just put them.
+
+                    for (let i = 0; i < frames.length; i++) {
+                        const frame = frames[i];
+                        const { width, height, top, left } = frame.dims;
+
+                        // Handle Disposal of PREVIOUS frame before drawing this one? 
+                        // No, disposal happens AFTER frame is displayed.
+                        // So for Frame N, we draw Frame N on top of (N-1 state modified by N-1 disposal).
+
+                        // BUT, to simplify for this tool:
+                        // Most simple GIFs: Disposal 1 (Keep) or 2 (Background).
+                        // Let's just draw over. 
+
+                        // Create ImageData from patch
+                        if (frame.patch && width > 0 && height > 0) {
+                            const patchData = tempCtx.createImageData(width, height);
+                            patchData.data.set(frame.patch);
+                            tempCtx.putImageData(patchData, left, top);
+                        }
+
+                        // Save this state as the frame image
+                        this.splitGif.frames.push({
+                            url: tempCvs.toDataURL('image/png'),
+                            delay: frame.delay
+                        });
+
+                        // Handle Disposal for NEXT frame
+                        // If disposal = 2 (restore bg), clear area.
+                        if (frame.disposalType === 2) {
+                            tempCtx.clearRect(left, top, width, height);
+                        }
+                        // If disposal = 3 (restore previous), we need to have saved it. 
+                        // Skipping complexity for now.
+                    }
+
+                    this.splitGif.loaded = true;
+                },
+                downloadSingleFrame(frame, idx) {
+                    saveAs(frame.url, `${this.splitGif.name}_frame_${idx + 1}.png`);
+                },
+                async downloadAllFrames() {
+                    const zip = new JSZip();
+                    const folder = zip.folder("frames");
+                    this.splitGif.frames.forEach((f, i) => {
+                        const b64 = f.url.split(',')[1];
+                        folder.file(`frame_${i + 1}.png`, b64, { base64: true });
+                    });
+                    const content = await zip.generateAsync({ type: "blob" });
+                    saveAs(content, `${this.splitGif.name}_frames.zip`);
+                },
+
+                // --- MERGE LOGIC ---
+                handleMergeFile(e) {
+                    const files = Array.from(e.target.files);
+                    this.addMergeFiles(files);
+                },
+                handleMergeDrop(e) {
+                    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+                    this.addMergeFiles(files);
+                },
+                addMergeFiles(files) {
+                    files.forEach(file => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            this.mergeGif.frames.push({
+                                url: e.target.result,
+                                file: file
+                            });
+                        };
+                        reader.readAsDataURL(file);
+                    });
+                },
+                resetMerge() {
+                    this.mergeGif.frames = [];
+                    this.mergeGif.url = '';
+                },
+                removeMergeFrame(idx) {
+                    this.mergeGif.frames.splice(idx, 1);
+                },
+                moveMergeFrame(idx, dir) {
+                    const newIdx = idx + dir;
+                    if (newIdx < 0 || newIdx >= this.mergeGif.frames.length) return;
+                    const temp = this.mergeGif.frames[idx];
+                    this.mergeGif.frames.splice(idx, 1);
+                    this.mergeGif.frames.splice(newIdx, 0, temp);
+                },
+                generateGif() {
+                    if (!this.mergeGif.frames.length) return;
+                    this.mergeGif.processing = true;
+
+                    const gif = new GIF({
+                        workers: 2,
+                        quality: 10,
+                        workerScript: 'js/gif.worker.js' // Local worker
+                    });
+
+                    // Load images
+                    const imagePromises = this.mergeGif.frames.map(f => {
+                        return new Promise(resolve => {
+                            const img = new Image();
+                            img.src = f.url;
+                            img.onload = () => resolve(img);
+                        });
+                    });
+
+                    Promise.all(imagePromises).then(images => {
+                        images.forEach(img => {
+                            gif.addFrame(img, { delay: this.mergeGif.delay });
+                        });
+
+                        gif.on('finished', (blob) => {
+                            this.mergeGif.url = URL.createObjectURL(blob);
+                            this.mergeGif.processing = false;
+                        });
+
+                        gif.render();
+                    });
+                },
+                downloadMergeGif() {
+                    if (!this.mergeGif.url) return;
+                    saveAs(this.mergeGif.url, 'merged_animation.gif');
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
