@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一键雪碧切 - PicEdit</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <script src="config.js"></script>
+    <style>
+        .grid-preview {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .frame-item {
+            cursor: move;
+        }
+
+        /* Scrollbar for frames list */
+        .frames-scroll::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .frames-scroll::-webkit-scrollbar-thumb {
+            background-color: #475569;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app" class="min-h-screen flex flex-col">
+        <nav class="nav-bar">
+            <div class="nav-logo"><a href="index.html">⚡ PicEdit</a> / 一键雪碧切</div>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <a v-for="item in menu" :href="item.link" :key="item.name"
+                    :class="{ active: item.link === 'sprite-cutter.html' }">{{ item.name }}</a>
+            </div>
+        </nav>
+
+        <main class="flex-1 overflow-hidden flex flex-col h-full max-w-full bg-[#0f172a] pb-5">
+            <header class="header mt-12 px-8 mb-4 flex-shrink-0">
+                <h1 class="text-2xl mb-2">一键雪碧图切割</h1>
+                <p class="text-sm">将 Sprite Sheet 切割为序列帧，支持导出 GIF 动图。</p>
+            </header>
+
+            <div v-if="!imageLoaded" class="flex-1 p-8">
+                <div class="file-input-wrapper max-w-xl w-full mx-auto mt-12" @click="$refs.fileInput.click()"
+                    @drop.prevent="handleDrop" @dragover.prevent>
+                    <input type="file" ref="fileInput" class="hidden" accept="image/*" @change="handleFileChange">
+                    <div class="text-6xl mb-4">🔪</div>
+                    <p class="text-lg font-semibold text-white">点击上传雪碧图</p>
+                    <p class="text-sm text-slate-400 mt-2">支持 JPG, PNG, WEBP</p>
+                </div>
+            </div>
+
+            <div v-else class="flex flex-1 h-full overflow-hidden border-t border-slate-700">
+                <!-- Controls Sidebar (Scrollable) -->
+                <div
+                    class="w-80 bg-[#151e2e] border-r border-slate-700 overflow-y-auto p-4 flex flex-col gap-4 flex-shrink-0 z-20 shadow-xl h-full">
+                    <!-- Actions -->
+                    <button
+                        class="btn btn-secondary w-full border-dashed border-2 border-slate-600 hover:border-slate-500 bg-slate-800/50"
+                        @click="reupload">
+                        📂 打开新图片
+                    </button>
+
+                    <!-- Slice Settings -->
+                    <div class="card p-3">
+                        <h3 class="text-sm font-bold text-white mb-2 border-b border-slate-700 pb-1">切割设置</h3>
+
+                        <div class="grid grid-cols-2 gap-2 mb-2">
+                            <div class="input-group mb-0">
+                                <label class="text-xs text-slate-400 mb-1 block">行数 (Rows)</label>
+                                <input type="number" v-model.number="rows" min="1"
+                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+                            </div>
+                            <div class="input-group mb-0">
+                                <label class="text-xs text-slate-400 mb-1 block">列数 (Cols)</label>
+                                <input type="number" v-model.number="cols" min="1"
+                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="input-group mb-0">
+                                <label class="text-xs text-slate-400 mb-1 block">X 边距</label>
+                                <input type="number" v-model.number="paddingX" min="0"
+                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+                            </div>
+                            <div class="input-group mb-0">
+                                <label class="text-xs text-slate-400 mb-1 block">Y 边距</label>
+                                <input type="number" v-model.number="paddingY" min="0"
+                                    class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+                            </div>
+                        </div>
+
+                        <div class="mt-2 text-xs text-slate-500 text-center">
+                            单帧: {{ frameWidth }} x {{ frameHeight }} px
+                        </div>
+
+                        <button class="btn btn-secondary w-full mt-3 text-sm py-1" @click="generateFrames">✂️
+                            重新切分</button>
+                    </div>
+
+                    <!-- GIF Preview & Settings -->
+                    <div class="card p-3">
+                        <h3 class="text-sm font-bold text-white mb-2 border-b border-slate-700 pb-1">GIF 预览</h3>
+
+                        <div
+                            class="w-full h-32 bg-slate-800 rounded flex items-center justify-center mb-3 border border-slate-600 overflow-hidden relative">
+                            <div v-if="processing"
+                                class="absolute inset-0 bg-black/50 flex items-center justify-center z-10">
+                                <div class="animate-spin text-2xl">⏳</div>
+                            </div>
+
+                            <img v-if="gifUrl" :src="gifUrl" class="max-w-full max-h-full object-contain">
+                            <div v-else class="text-slate-500 flex flex-col items-center">
+                                <span class="text-2xl mb-1">🎬</span>
+                                <span class="text-[10px]">等待生成</span>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="flex justify-between text-xs text-slate-400 mb-1">
+                                <span>速度: {{ gifDelay }}ms</span>
+                            </label>
+                            <input type="range" v-model.number="gifDelay" min="20" max="500" step="10"
+                                @input="debouncedGenerateGif" class="h-1">
+                        </div>
+
+                        <button class="btn w-full bg-pink-600 hover:bg-pink-500 text-sm py-1 mb-2" @click="downloadGif"
+                            :disabled="!gifUrl">
+                            ⬇️ 下载 GIF
+                        </button>
+                    </div>
+
+                    <!-- Other Exports -->
+                    <div class="card p-3">
+                        <button class="btn btn-secondary w-full text-sm py-2" @click="downloadZip"
+                            :disabled="!frames.length">
+                            📦 打包下载图片 (.zip)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Main Content Area -->
+                <div class="flex-1 flex flex-col min-w-0 bg-[#0f172a] relative">
+                    <!-- Toolbox Header -->
+                    <div class="h-10 border-b border-slate-700 flex items-center justify-between px-4 bg-[#1e293b]">
+                        <span class="text-xs text-slate-400">主预览窗口</span>
+                        <div class="flex gap-2">
+                            <button class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-blue-300"
+                                @click="fitToScreen = !fitToScreen">
+                                {{ fitToScreen ? '↔️ 原始大小' : '🔍 适应屏幕' }}
+                            </button>
+                            <button class="text-xs bg-blue-600 hover:bg-blue-500 px-2 py-1 rounded text-white"
+                                @click="toggleFullPreview">
+                                ⤢ 全屏查看
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Visual Editor -->
+                    <div class="flex-1 overflow-auto relative flex items-center justify-center p-4 bg-slate-900/50"
+                        ref="canvasContainer">
+                        <div class="relative inline-block border border-slate-600 shadow-2xl transition-all duration-200"
+                            :class="{'cursor-zoom-in': fitToScreen, 'cursor-zoom-out': !fitToScreen}"
+                            @click="fitToScreen ? toggleFullPreview() : null">
+                            <img ref="sourceImg" :src="sourceImageUrl" @load="onImageLoad" class="block"
+                                :style="computedImageStyle">
+                            <canvas ref="gridCanvas" class="grid-preview"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Frames Strip -->
+                    <div v-if="frames.length"
+                        class="h-24 bg-[#1e293b] border-t border-slate-700 flex flex-col flex-shrink-0">
+                        <div class="px-2 py-1 text-[10px] text-slate-500 flex justify-between">
+                            <span>序列帧 ({{ frames.length }})</span>
+                            <span>拖拽滚动查看更多</span>
+                        </div>
+                        <div
+                            class="flex-1 overflow-x-auto overflow-y-hidden flex gap-2 px-2 pb-2 items-center frames-scroll">
+                            <div v-for="(frame, idx) in frames" :key="idx"
+                                class="flex-shrink-0 relative group w-16 h-16 bg-slate-800 border border-slate-600 rounded flex items-center justify-center">
+                                <img :src="frame" class="max-w-full max-h-full">
+
+                                <!-- Frame Index -->
+                                <div
+                                    class="absolute top-0 left-0 bg-black/60 text-[8px] px-1 text-slate-300 rounded-br pointer-events-none">
+                                    {{ idx + 1 }}
+                                </div>
+
+                                <!-- Hover Controls -->
+                                <div
+                                    class="absolute inset-0 bg-black/80 hidden group-hover:flex flex-col items-center justify-center gap-1 z-10 backdrop-blur-[1px] rounded">
+                                    <div class="flex gap-2">
+                                        <button class="text-xs hover:text-white text-slate-400"
+                                            @click.stop="moveFrame(idx, -1)" title="向前移动" v-if="idx > 0">⬅️</button>
+                                        <button class="text-xs hover:text-white text-slate-400"
+                                            @click.stop="moveFrame(idx, 1)" title="向后移动"
+                                            v-if="idx < frames.length - 1">➡️</button>
+                                    </div>
+                                    <div class="flex gap-2 mt-1">
+                                        <button class="text-xs hover:text-green-400 text-slate-400"
+                                            @click.stop="duplicateFrame(idx)" title="复制">➕</button>
+                                        <button class="text-xs hover:text-red-400 text-slate-400"
+                                            @click.stop="removeFrame(idx)" title="删除">❌</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full Preview Modal -->
+                <div v-if="showFullPreview" class="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center"
+                    @click.self="toggleFullPreview">
+                    <button
+                        class="absolute top-6 right-6 z-[101] bg-white/20 hover:bg-red-600 text-white rounded-full p-3 transition-colors backdrop-blur-sm shadow-xl"
+                        @click="toggleFullPreview">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+
+                    <div class="relative max-w-full max-h-full overflow-auto flex p-8" @click.self="toggleFullPreview">
+                        <div class="relative shadow-2xl mx-auto my-auto">
+                            <img :src="sourceImageUrl" class="block max-w-[90vw] max-h-[90vh] object-contain">
+                            <canvas ref="fullGridCanvas"
+                                class="absolute inset-0 pointer-events-none w-full h-full"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                menu: menuConfig,
+                imageLoaded: false,
+                sourceImageUrl: '',
+                rows: 4,
+                cols: 4,
+                paddingX: 0,
+                paddingY: 0,
+                imgWidth: 0,
+                imgHeight: 0,
+                frames: [], // Array of base64 images
+                gifDelay: 100,
+                processing: false,
+                gifUrl: '',
+                showFullPreview: false,
+                fitToScreen: true
+            },
+            computed: {
+                computedImageStyle() {
+                    // Fix grid misalignment: do NOT use object-fit on image. 
+                    // Let image element resize naturally with max constraints.
+                    // The container (relative inline-block) will shrink to fit the image.
+                    // The absolute canvas (w-100% h-100%) will then match exactly.
+                    return this.fitToScreen
+                        ? { maxWidth: '100%', maxHeight: '60vh', width: 'auto', height: 'auto' }
+                        : { maxWidth: 'none', maxHeight: 'none' };
+                },
+                frameWidth() {
+                    if (!this.imgWidth) return 0;
+                    // Calculation logic: (TotalWidth - (Cols-1)*PadX - 2*Margin?) 
+                    // Simplifying: Assuming padding is BETWEEN items.
+                    // W = (TotalW - (cols-1)*PadX) / cols ? 
+                    // Let's assume user wants to tune precise cut.
+                    // Usually sprites are uniform.
+                    return Math.floor((this.imgWidth - (this.cols - 1) * this.paddingX) / this.cols);
+                },
+                frameHeight() {
+                    if (!this.imgHeight) return 0;
+                    return Math.floor((this.imgHeight - (this.rows - 1) * this.paddingY) / this.rows);
+                }
+            },
+            methods: {
+                handleFileChange(e) {
+                    const file = e.target.files[0];
+                    if (file) this.loadImage(file);
+                },
+                handleDrop(e) {
+                    const file = e.dataTransfer.files[0];
+                    if (file) this.loadImage(file);
+                },
+                reupload() {
+                    this.imageLoaded = false;
+                    this.sourceImageUrl = '';
+                    this.frames = [];
+                    this.gifUrl = '';
+                    // Optional: reset file input value so same file can be selected again
+                    if (this.$refs.fileInput) this.$refs.fileInput.value = '';
+                },
+                loadImage(file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.sourceImageUrl = e.target.result;
+                        this.imageLoaded = true;
+                        this.frames = [];
+                        this.gifUrl = '';
+                    };
+                    reader.readAsDataURL(file);
+                },
+                onImageLoad() {
+                    const img = this.$refs.sourceImg;
+                    this.imgWidth = img.naturalWidth;
+                    this.imgHeight = img.naturalHeight;
+                    this.drawGrid();
+                    // Auto generate frames initially
+                    this.generateFrames();
+                },
+                drawGrid() {
+                    if (!this.$refs.gridCanvas || !this.imageLoaded) return;
+                    const c = this.$refs.gridCanvas;
+                    const ctx = c.getContext('2d');
+                    c.width = this.imgWidth;
+                    c.height = this.imgHeight;
+
+                    ctx.clearRect(0, 0, c.width, c.height);
+                    ctx.strokeStyle = '#00ff00'; // Green grid
+                    ctx.lineWidth = 1;
+
+                    const fw = this.frameWidth;
+                    const fh = this.frameHeight;
+
+                    for (let r = 0; r < this.rows; r++) {
+                        for (let col = 0; col < this.cols; col++) {
+                            const x = col * (fw + this.paddingX);
+                            const y = r * (fh + this.paddingY);
+                            ctx.strokeRect(x, y, fw, fh);
+                        }
+                    }
+                },
+                generateFrames() {
+                    this.drawGrid(); // update grid
+                    this.frames = [];
+                    const img = this.$refs.sourceImg;
+                    const fw = this.frameWidth;
+                    const fh = this.frameHeight;
+
+                    if (fw <= 0 || fh <= 0) return;
+
+                    // Create a temporary canvas for slicing
+                    const canvas = document.createElement('canvas');
+                    canvas.width = fw;
+                    canvas.height = fh;
+                    const ctx = canvas.getContext('2d');
+
+                    for (let r = 0; r < this.rows; r++) {
+                        for (let col = 0; col < this.cols; col++) {
+                            const x = col * (fw + this.paddingX);
+                            const y = r * (fh + this.paddingY);
+
+                            // Clear temp canvas
+                            ctx.clearRect(0, 0, fw, fh);
+                            ctx.drawImage(img, x, y, fw, fh, 0, 0, fw, fh);
+
+                            this.frames.push(canvas.toDataURL('image/png'));
+                        }
+                    }
+                    // Auto generate GIF when frames change
+                    this.debouncedGenerateGif();
+                },
+                async downloadZip() {
+                    if (!this.frames.length) return;
+                    const zip = new JSZip();
+                    const folder = zip.folder("sprites");
+
+                    this.frames.forEach((dataUrl, idx) => {
+                        // Remove data:image/png;base64, prefix
+                        const b64 = dataUrl.split(',')[1];
+                        folder.file(`frame_${idx + 1}.png`, b64, { base64: true });
+                    });
+
+                    const content = await zip.generateAsync({ type: "blob" });
+                    saveAs(content, "sprites.zip");
+                },
+                debouncedGenerateGif() {
+                    // Simple debounce
+                    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+                    this.debounceTimer = setTimeout(() => {
+                        this.generateGif();
+                    }, 500);
+                },
+                generateGif() {
+                    if (!this.frames.length) return;
+                    // If already processing, maybe we should queue? For now simple ignore or overwrite?
+                    // Let's just run. GIF.js might be heavy.
+
+                    this.processing = true;
+                    // Dont clear gifUrl immediately to prevent flashing, only update when done.
+
+                    // GIF.js configuration
+                    // Updated to use local worker to avoid Cross-Origin issues
+                    const gif = new GIF({
+                        workers: 2,
+                        quality: 10,
+                        width: this.frameWidth,
+                        height: this.frameHeight,
+                        workerScript: 'gif.worker.js'
+                    });
+
+                    // Add frames
+                    const imageLoadingPromises = this.frames.map(src => {
+                        return new Promise(resolve => {
+                            const i = new Image();
+                            i.src = src;
+                            i.onload = () => resolve(i);
+                        });
+                    });
+
+                    Promise.all(imageLoadingPromises).then(images => {
+                        images.forEach(img => {
+                            gif.addFrame(img, { delay: this.gifDelay });
+                        });
+
+                        gif.on('finished', (blob) => {
+                            if (this.gifUrl) URL.revokeObjectURL(this.gifUrl);
+                            this.gifUrl = URL.createObjectURL(blob);
+                            this.processing = false;
+                        });
+
+                        gif.render();
+                    });
+                },
+                downloadGif() {
+                    if (!this.gifUrl) return;
+                    const link = document.createElement('a');
+                    link.download = 'sprite_animation.gif';
+                    link.href = this.gifUrl;
+                    link.click();
+                },
+                toggleFullPreview() {
+                    this.showFullPreview = !this.showFullPreview;
+                    if (this.showFullPreview) {
+                        this.$nextTick(() => {
+                            this.drawFullGrid();
+                        });
+                    }
+                },
+                drawFullGrid() {
+                    this.$nextTick(() => {
+                        if (!this.$refs.fullGridCanvas || !this.imageLoaded) return;
+                        const c = this.$refs.fullGridCanvas;
+                        const ctx = c.getContext('2d');
+                        c.width = this.imgWidth;
+                        c.height = this.imgHeight;
+
+                        // Clear
+                        ctx.clearRect(0, 0, c.width, c.height);
+                        ctx.strokeStyle = '#00ff00';
+                        ctx.lineWidth = 1; // Maybe thicker for large view? Let's keep 1 or 2.
+
+                        const fw = this.frameWidth;
+                        const fh = this.frameHeight;
+                        for (let r = 0; r < this.rows; r++) {
+                            for (let col = 0; col < this.cols; col++) {
+                                const x = col * (fw + this.paddingX);
+                                const y = r * (fh + this.paddingY);
+                                ctx.strokeRect(x, y, fw, fh);
+                            }
+                        }
+                    });
+                },
+                removeFrame(idx) {
+                    this.frames.splice(idx, 1);
+                    this.debouncedGenerateGif();
+                },
+                duplicateFrame(idx) {
+                    // Copy string content
+                    const frame = this.frames[idx];
+                    this.frames.splice(idx + 1, 0, frame);
+                    this.debouncedGenerateGif();
+                },
+                moveFrame(idx, direction) {
+                    const newIdx = idx + direction;
+                    if (newIdx < 0 || newIdx >= this.frames.length) return;
+
+                    const temp = this.frames[idx];
+                    thisVue = this; // Vue 2 reactivity Caveat? No, array mutation standard methods work.
+                    // But direct index set requires Vue.set. Splice is safe.
+
+                    // Swift swap using splice
+                    // Remove item at idx
+                    this.frames.splice(idx, 1);
+                    // Insert at newIdx
+                    this.frames.splice(newIdx, 0, temp);
+
+                    this.debouncedGenerateGif();
+                }
+            },
+            watch: {
+                rows() { this.drawGrid(); },
+                cols() { this.drawGrid(); },
+                paddingX() { this.drawGrid(); },
+                paddingY() { this.drawGrid(); }
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一键图片压 - PicEdit</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <script src="config.js"></script>
+</head>
+
+<body>
+    <div id="app" class="min-h-screen flex flex-col">
+        <nav class="nav-bar">
+            <div class="nav-logo"><a href="index.html">⚡ PicEdit</a> / 一键图片压</div>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <a v-for="item in menu" :href="item.link" :key="item.name"
+                    :class="{ active: item.link === 'image-compress.html' }">{{ item.name }}</a>
+            </div>
+        </nav>
+
+        <main class="container flex-1">
+            <header class="header">
+                <h1>一键图片压缩</h1>
+                <p>本地无损/有损压缩，实时预览体积变化。</p>
+            </header>
+
+            <div v-if="!imageLoaded" class="max-w-xl mx-auto">
+                <div class="file-input-wrapper" @click="$refs.fileInput.click()" @drop.prevent="handleDrop"
+                    @dragover.prevent>
+                    <input type="file" ref="fileInput" class="hidden" accept="image/jpeg,image/png,image/webp"
+                        @change="handleFileChange">
+                    <div class="text-6xl mb-4">📉</div>
+                    <p class="text-lg font-semibold text-white">点击上传图片 (JPG/PNG/WebP)</p>
+                </div>
+            </div>
+
+            <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Controls -->
+                <div class="lg:col-span-4 flex flex-col gap-6">
+                    <div class="card">
+                        <h3 class="text-lg font-bold text-white mb-4 border-b border-slate-700 pb-2">压缩设置</h3>
+
+                        <div class="input-group">
+                            <label class="input-label flex justify-between">
+                                <span>质量 (Quality)</span>
+                                <span class="text-blue-400">{{ Math.round(quality * 100) }}%</span>
+                            </label>
+                            <input type="range" v-model.number="quality" min="0.01" max="1" step="0.01"
+                                @input="compress">
+                            <p class="text-xs text-slate-500 mt-1">越低体积越小，画质越差</p>
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label flex justify-between">
+                                <span>尺寸缩放 (Scale)</span>
+                                <span class="text-blue-400">{{ Math.round(scale * 100) }}%</span>
+                            </label>
+                            <input type="range" v-model.number="scale" min="0.1" max="1" step="0.1" @input="compress">
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label">输出格式</label>
+                            <select v-model="outputFormat" @change="compress"
+                                class="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white">
+                                <option value="image/jpeg">JPEG (推荐)</option>
+                                <option value="image/png">PNG (无损)</option>
+                                <option value="image/webp">WebP (高效)</option>
+                            </select>
+                        </div>
+
+                        <div class="mt-4 p-4 bg-slate-800 rounded-lg">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-slate-400">原始大小:</span>
+                                <span class="text-white">{{ formatSize(originalSize) }}</span>
+                            </div>
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-slate-400">压缩后:</span>
+                                <span class="text-green-400 font-bold">{{ formatSize(compressedSize) }}</span>
+                            </div>
+                            <div class="flex justify-between items-center border-t border-slate-600 pt-2">
+                                <span class="text-slate-400">节省:</span>
+                                <span class="text-blue-400">{{ savedPercentage }}%</span>
+                            </div>
+                        </div>
+
+                        <button class="btn w-full mt-6" @click="download">⬇️ 下载压缩图</button>
+                    </div>
+                </div>
+
+                <!-- Preview Comparison -->
+                <div class="lg:col-span-8">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="flex flex-col gap-2">
+                            <span class="text-sm text-center text-slate-400">原图</span>
+                            <div class="card p-2 flex items-center justify-center min-h-[300px] bg-slate-800">
+                                <img :src="sourceUrl" class="max-w-full max-h-[500px] object-contain">
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <span class="text-sm text-center text-slate-400 flex items-center justify-center gap-2">
+                                压缩预览
+                                <span v-if="processing" class="text-xs text-yellow-500">(处理中...)</span>
+                            </span>
+                            <div class="card p-2 flex items-center justify-center min-h-[300px] bg-slate-800 relative">
+                                <img v-if="compressedUrl" :src="compressedUrl"
+                                    class="max-w-full max-h-[500px] object-contain">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                menu: menuConfig,
+                imageLoaded: false,
+                sourceUrl: '',
+                compressedUrl: '',
+                originalSize: 0,
+                compressedSize: 0,
+                quality: 0.8,
+                scale: 1,
+                outputFormat: 'image/jpeg',
+                processing: false,
+                imgObj: null
+            },
+            computed: {
+                savedPercentage() {
+                    if (!this.originalSize) return 0;
+                    const saved = this.originalSize - this.compressedSize;
+                    return Math.max(0, (saved / this.originalSize * 100).toFixed(1));
+                }
+            },
+            methods: {
+                handleFileChange(e) {
+                    const file = e.target.files[0];
+                    if (file) this.loadImage(file);
+                },
+                handleDrop(e) {
+                    const file = e.dataTransfer.files[0];
+                    if (file) this.loadImage(file);
+                },
+                loadImage(file) {
+                    this.originalSize = file.size;
+                    this.outputFormat = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.sourceUrl = e.target.result;
+                        this.imgObj = new Image();
+                        this.imgObj.onload = () => {
+                            this.imageLoaded = true;
+                            this.compress();
+                        };
+                        this.imgObj.src = this.sourceUrl;
+                    };
+                    reader.readAsDataURL(file);
+                },
+                formatSize(bytes) {
+                    if (bytes === 0) return '0 B';
+                    const k = 1024;
+                    const sizes = ['B', 'KB', 'MB', 'GB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+                compress() {
+                    if (!this.imgObj) return;
+                    // Debounce technically better, but for small images direct is ok.
+                    this.processing = true;
+
+                    const canvas = document.createElement('canvas');
+                    const w = this.imgObj.naturalWidth * this.scale;
+                    const h = this.imgObj.naturalHeight * this.scale;
+
+                    canvas.width = w;
+                    canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+
+                    // Fill white background for JPEGs to avoid black transparency
+                    if (this.outputFormat === 'image/jpeg') {
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.fillRect(0, 0, w, h);
+                    }
+
+                    ctx.drawImage(this.imgObj, 0, 0, w, h);
+
+                    canvas.toBlob((blob) => {
+                        if (this.compressedUrl) URL.revokeObjectURL(this.compressedUrl);
+                        this.compressedUrl = URL.createObjectURL(blob);
+                        this.compressedSize = blob.size;
+                        this.processing = false;
+                    }, this.outputFormat, this.quality);
+                },
+                download() {
+                    if (!this.compressedUrl) return;
+                    const link = document.createElement('a');
+                    const ext = this.outputFormat.split('/')[1];
+                    link.download = `compressed_image.${ext}`;
+                    link.href = this.compressedUrl;
+                    link.click();
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

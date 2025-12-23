@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一键绿幕抠 - PicEdit</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <script src="config.js"></script>
+    <style>
+        .checkerboard-bg {
+            background-color: #eee;
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
+                linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- Nav -->
+        <nav class="nav-bar">
+            <div class="nav-logo"><a href="index.html">⚡ PicEdit</a> / 一键绿幕抠</div>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <a v-for="item in menu" :href="item.link" :key="item.name"
+                    :class="{ active: item.link === 'green-screen.html' }">{{ item.name }}</a>
+            </div>
+        </nav>
+
+        <main class="container flex-1">
+            <header class="header">
+                <h1>一键绿幕抠图</h1>
+                <p>上传带绿色背景的图片，自动去除背景，支持调节容差。</p>
+            </header>
+
+            <div v-if="!imageLoaded" class="max-w-xl mx-auto">
+                <div class="file-input-wrapper" @click="$refs.fileInput.click()" @drop.prevent="handleDrop"
+                    @dragover.prevent>
+                    <input type="file" ref="fileInput" class="hidden" accept="image/*" @change="handleFileChange">
+                    <div class="text-6xl mb-4">📂</div>
+                    <p class="text-lg font-semibold text-white">点击上传或拖拽图片到这里</p>
+                    <p class="text-sm text-slate-400 mt-2">支持 JPG, PNG</p>
+                </div>
+            </div>
+
+            <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- Controls -->
+                <div class="card h-fit">
+                    <h3 class="text-lg font-bold text-white mb-4 border-b border-slate-700 pb-2">参数设置</h3>
+
+                    <div class="input-group">
+                        <label class="input-label flex justify-between">
+                            <span>容差值 (Tolerance)</span>
+                            <span class="text-blue-400">{{ tolerance }}</span>
+                        </label>
+                        <input type="range" v-model.number="tolerance" min="0" max="200" step="1" @input="processImage">
+                        <p class="text-xs text-slate-500 mt-1">值越大，去除的绿色范围越广</p>
+                    </div>
+
+                    <div class="input-group">
+                        <label class="input-label flex justify-between">
+                            <span>边缘平滑 (Smoothing)</span>
+                            <span class="text-blue-400">{{ smoothing }}</span>
+                        </label>
+                        <input type="range" v-model.number="smoothing" min="0" max="10" step="0.1"
+                            @input="processImage">
+                    </div>
+
+                    <div class="input-group">
+                        <label class="input-label">目标颜色 (点击选取)</label>
+                        <div class="flex items-center gap-2">
+                            <div class="w-10 h-10 rounded border border-slate-600 shadow-inner"
+                                :style="{backgroundColor: targetColorHex}"></div>
+                            <input type="color" v-model="targetColorHex" @input="updateTargetColorFromHex"
+                                class="bg-transparent border-0 w-8 h-8 cursor-pointer p-0">
+                            <span class="text-sm text-slate-400">{{ targetColorHex }}</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 flex flex-col gap-3">
+                        <button class="btn w-full" @click="downloadResult">⬇️ 下载结果 PNG</button>
+                        <button class="btn btn-secondary w-full" @click="reset">🔄 重新上传</button>
+                    </div>
+                </div>
+
+                <!-- Preview -->
+                <div class="lg:col-span-2 flex flex-col gap-4">
+                    <div
+                        class="card relative p-4 min-h-[400px] flex items-center justify-center checkerboard-bg rounded-lg overflow-hidden">
+
+                        <!-- Original (Hidden logic source) -->
+                        <img ref="sourceImg" :src="sourceImageUrl" class="hidden" @load="onImageLoad">
+
+                        <!-- Canvas Result -->
+                        <canvas ref="canvas" class="max-w-full max-h-[600px] object-contain shadow-2xl"></canvas>
+
+                        <div v-if="processing"
+                            class="absolute inset-0 bg-black/50 flex items-center justify-center z-20">
+                            <div class="animate-spin text-4xl">⏳</div>
+                        </div>
+                    </div>
+                    <div class="text-center text-sm text-slate-500">
+                        提示: 图片处理在本地进行，不会上传到服务器。
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                menu: menuConfig,
+                imageLoaded: false,
+                sourceImageUrl: '',
+                tolerance: 100,
+                smoothing: 2,
+                processing: false,
+                targetColor: { r: 0, g: 255, b: 0 }, // Default Green
+                targetColorHex: '#00ff00',
+                canvasContext: null
+            },
+            methods: {
+                handleFileChange(e) {
+                    const file = e.target.files[0];
+                    if (file) this.loadImage(file);
+                },
+                handleDrop(e) {
+                    const file = e.dataTransfer.files[0];
+                    if (file) this.loadImage(file);
+                },
+                loadImage(file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        this.sourceImageUrl = e.target.result;
+                        this.imageLoaded = true;
+                        // processImage will be called by @load on img tag
+                    };
+                    reader.readAsDataURL(file);
+                },
+                reset() {
+                    this.imageLoaded = false;
+                    this.sourceImageUrl = '';
+                    this.tolerance = 100;
+                },
+                updateTargetColorFromHex() {
+                    // Convert Hex to RGB
+                    const hex = this.targetColorHex.slice(1);
+                    const bigint = parseInt(hex, 16);
+                    this.targetColor = {
+                        r: (bigint >> 16) & 255,
+                        g: (bigint >> 8) & 255,
+                        b: bigint & 255
+                    };
+                    this.processImage();
+                },
+                onImageLoad() {
+                    const img = this.$refs.sourceImg;
+                    const canvas = this.$refs.canvas;
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    this.canvasContext = canvas.getContext('2d');
+                    this.processImage();
+                },
+                processImage() {
+                    if (!this.canvasContext || !this.$refs.sourceImg) return;
+
+                    // Simple throttling could be added here if performance is an issue
+                    const img = this.$refs.sourceImg;
+                    const w = img.naturalWidth;
+                    const h = img.naturalHeight;
+
+                    // Draw original
+                    this.canvasContext.drawImage(img, 0, 0, w, h);
+
+                    const frameData = this.canvasContext.getImageData(0, 0, w, h);
+                    const data = frameData.data;
+                    const { r: tr, g: tg, b: tb } = this.targetColor;
+                    const tol = this.tolerance;
+                    // squared euclidean distance for speed, compared against tol^2 scale roughly
+                    // Actually, simple Euclidean distance is easier to reason about for tolerance:
+                    // Color distance = sqrt((r1-r2)^2 + ...)
+                    // Let's use RGB vector distance.
+
+                    for (let i = 0; i < data.length; i += 4) {
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+
+                        // Calculate distance to target color
+                        const dist = Math.sqrt(
+                            (r - tr) * (r - tr) +
+                            (g - tg) * (g - tg) +
+                            (b - tb) * (b - tb)
+                        );
+
+                        // If distance is within tolerance
+                        if (dist < tol) {
+                            // Perfect match or very close
+                            data[i + 3] = 0; // Transparent
+                        } else if (dist < tol + (this.smoothing * 10)) {
+                            // Smoothing edge: fade out alpha
+                            // normalize factor from 0 to 1
+                            const factor = (dist - tol) / (this.smoothing * 10);
+                            data[i + 3] = data[i + 3] * factor;
+                        }
+                    }
+
+                    this.canvasContext.putImageData(frameData, 0, 0);
+                },
+                downloadResult() {
+                    const link = document.createElement('a');
+                    link.download = 'green_screen_removed.png';
+                    link.href = this.$refs.canvas.toDataURL('image/png');
+                    link.click();
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
